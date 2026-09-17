@@ -30,6 +30,7 @@ def main():
                 (root / "recomp_net").mkdir()
                 (root / "recomp_net/auth.h").write_text("RNET_AUTH_HEADER_INCLUDED\n")
                 (root / "recomp_net/chat_filter.h").write_text("RNET_CHAT_HEADER_INCLUDED\n")
+                (root / "recomp_net/host_relay.h").write_text("RNET_HOST_RELAY_HEADER_INCLUDED\n")
             flags = ["RECOMP_LAUNCHER=1", "RECOMP_LAUNCHER_HAS_ACCOUNT=1",
                      "SDL_VERSION_ATLEAST(x,y,z)=1", "DEFAULT_DEBUG_PORT=4370"]
             if enabled:
@@ -44,7 +45,7 @@ def main():
                                errors="replace", timeout=30)
             assert p.returncode == 0, p.stderr
             if enabled:
-                for token in ("RNET_AUTH_HEADER_INCLUDED", "rnet_account_pump()",
+                for token in ("RNET_AUTH_HEADER_INCLUDED", "RNET_HOST_RELAY_HEADER_INCLUDED", "rnet_account_pump()",
                               "ae_np_account_login_begin", "account_available = ae_np_account_available"):
                     assert token in p.stdout, f"enabled path lost {token}"
             else:

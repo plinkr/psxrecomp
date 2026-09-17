@@ -2455,13 +2455,21 @@ function(psxrecomp_add_game_runtime target)
         GEN_FULL_FALLBACK
         VERSION_FILE
         CODEGEN_SETUP_INCLUDE_DIR
+        # One path, NOT a list. As a multiValueArg the parse only stops at a
+        # keyword psxrecomp_add_game_runtime knows, so every forwarded keyword
+        # written after it on the call line (WINDOW_TITLE, MAX_PLAYERS,
+        # LAUNCHER_BOXART, APP_ICON...) was absorbed here as extra "sources".
+        # They reached the runtime target by accident, and the LAST value of
+        # that run -- host/psxrecomp_codegen_host.c -- was dropped at link time
+        # as a stray positional argument, breaking the codegen setup host.
+        CODEGEN_SETUP_SOURCES
         NETPLAY_LOBBY_URL
         PRELOADED_MODS_DIR
     )
     # EXCLUDE_BUILTIN_MODS is parsed here (not left in the unparsed tail) for
     # the same reason as PRELOADED_MODS_DIR: an unknown keyword written after
-    # CODEGEN_SETUP_SOURCES would otherwise be swallowed as more source files.
-    set(multiValueArgs GEN_FULL_GLOB CODEGEN_SETUP_SOURCES EXCLUDE_BUILTIN_MODS)
+    # EXCLUDE_BUILTIN_MODS would otherwise be swallowed as more mod ids.
+    set(multiValueArgs GEN_FULL_GLOB EXCLUDE_BUILTIN_MODS)
     cmake_parse_arguments(PSXG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(NOT PSXRECOMP_ROOT)

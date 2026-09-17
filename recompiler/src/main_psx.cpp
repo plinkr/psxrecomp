@@ -243,6 +243,8 @@ static int psxrecomp_game_main(int argc, char** argv) {
     uint32_t              ws_cull_clip_edge_width = 0; // [widescreen.cull] clip_edge_width
     std::vector<PSXRecompV4::WidescreenCullKeepSite> ws_cull_keep;
     std::vector<PSXRecompV4::WidescreenAngleSite> ws_cull_angle;
+    std::vector<PSXRecompV4::WidescreenSxyXLowerSite> ws_cull_sxy_x_lower;
+    std::vector<PSXRecompV4::WidescreenSxyCullSite> ws_cull_sxy;
     std::vector<PSXRecompV4::DrawDistanceClampSite> draw_distance_clamps; // [[draw_distance.clamp]]
     PSXRecompV4::WidescreenAspectConeConfig ws_aspect_cone;
     int                   ws_cull_activation_guard_pixels = 0;
@@ -319,6 +321,8 @@ static int psxrecomp_game_main(int argc, char** argv) {
         ws_cull_keep = cfg.ws_cull_keep_sites;
         ws_cull_masked_reject = cfg.ws_cull_masked_reject_sites;
         ws_cull_angle = cfg.ws_cull_angle_sites;
+        ws_cull_sxy_x_lower = cfg.ws_cull_sxy_x_lower_sites;
+        ws_cull_sxy = cfg.ws_cull_sxy_sites;
         draw_distance_clamps = cfg.draw_distance_clamp_sites;
         ws_aspect_cone = cfg.ws_aspect_cone;
         ws_cull_activation_guard_pixels =
@@ -425,6 +429,41 @@ static int psxrecomp_game_main(int argc, char** argv) {
         if (ws_cull_keep.empty()) ws_cull_keep = wscfg.ws_cull_keep_sites;
         if (ws_cull_masked_reject.empty()) ws_cull_masked_reject = wscfg.ws_cull_masked_reject_sites;
         if (ws_cull_angle.empty()) ws_cull_angle = wscfg.ws_cull_angle_sites;
+        for (const auto& incoming : wscfg.ws_cull_sxy_x_lower_sites) {
+            const auto existing = std::find_if(
+                ws_cull_sxy_x_lower.begin(), ws_cull_sxy_x_lower.end(),
+                [&](const auto& site) {
+                    return (site.address & 0x1FFFFFFFu) ==
+                           (incoming.address & 0x1FFFFFFFu);
+                });
+            if (existing == ws_cull_sxy_x_lower.end()) {
+                ws_cull_sxy_x_lower.push_back(incoming);
+            } else if (existing->expected != incoming.expected) {
+                throw std::runtime_error(fmt::format(
+                    "conflicting [widescreen.cull] sxy_x_lower_sites at 0x{:08X}",
+                    incoming.address));
+            }
+        }
+        for (const auto& incoming : wscfg.ws_cull_sxy_sites) {
+            const auto existing = std::find_if(
+                ws_cull_sxy.begin(), ws_cull_sxy.end(),
+                [&](const auto& site) {
+                    return (site.final_address & 0x1FFFFFFFu) ==
+                           (incoming.final_address & 0x1FFFFFFFu);
+                });
+            if (existing == ws_cull_sxy.end()) {
+                ws_cull_sxy.push_back(incoming);
+            } else if (existing->final_expected != incoming.final_expected ||
+                       existing->result_reg != incoming.result_reg ||
+                       existing->kind != incoming.kind ||
+                       existing->vertex_regs != incoming.vertex_regs ||
+                       existing->fold_addresses != incoming.fold_addresses ||
+                       existing->fold_expected != incoming.fold_expected) {
+                throw std::runtime_error(fmt::format(
+                    "conflicting [widescreen.cull] sxy site at 0x{:08X}",
+                    incoming.final_address));
+            }
+        }
         if (ws_aspect_cone.sites.empty())
             ws_aspect_cone = wscfg.ws_aspect_cone;
         ws_cull_activation_guard_pixels =
@@ -1494,6 +1533,8 @@ static int psxrecomp_game_main(int argc, char** argv) {
         codegen_config.ws_cull_clip_edge_width = ws_cull_w_imms.front();
     codegen_config.ws_cull_keep_sites = ws_cull_keep;
     codegen_config.ws_cull_angle_sites = ws_cull_angle;
+    codegen_config.ws_cull_sxy_x_lower_sites = ws_cull_sxy_x_lower;
+    codegen_config.ws_cull_sxy_sites = ws_cull_sxy;
     codegen_config.draw_distance_clamp_sites = draw_distance_clamps;
     codegen_config.ws_aspect_cone = ws_aspect_cone;
     codegen_config.ws_cull_w_imms      = ws_cull_w_imms;

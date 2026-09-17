@@ -183,6 +183,9 @@ struct CodeGenConfig {
     // max before the instruction runs; overlay code keeps its own code.
     std::vector<PSXRecompV4::DrawDistanceClampSite> draw_distance_clamp_sites;
 
+    std::vector<PSXRecompV4::WidescreenSxyXLowerSite> ws_cull_sxy_x_lower_sites;
+    std::vector<PSXRecompV4::WidescreenSxyCullSite> ws_cull_sxy_sites;
+
     // Exact model-participation cosine compares that gain a camera-horizontal
     // aspect envelope while preserving the vanilla vertical cone.
     PSXRecompV4::WidescreenAspectConeConfig ws_aspect_cone;
