@@ -144,6 +144,34 @@ struct WidescreenAspectConeConfig {
     std::array<uint32_t, 3> queue_capacities{};
     std::array<uint32_t, 3> queue_type_masks{};
 };
+
+struct WidescreenSxyCullSite {
+    enum class Kind {
+        Tri,
+        Quad
+    };
+
+    Kind kind = Kind::Tri;
+
+    // Instruction that produces the final AND/reject value.
+    uint32_t final_address = 0;
+    uint32_t final_expected = 0;
+    uint32_t result_reg = 1;
+
+    // GPRs containing projected GTE SXY values.
+    std::vector<uint32_t> vertex_regs;
+
+    // Earlier AND instructions whose result is folded into the final helper.
+    // These instructions only contribute to the temporary reject mask.
+    std::vector<uint32_t> fold_addresses;
+    std::vector<uint32_t> fold_expected;
+};
+
+struct WidescreenSxyXLowerSite {
+    uint32_t address = 0;
+    uint32_t expected = 0;
+};
+
 // Parse/format a pad mode. Strict game.toml parsing accepts "analog" or
 // "digital" (case-insensitive), returns `fallback` for unknown values, and
 // THROWS on "hybrid" — game-specific switching must not be declared globally.
@@ -950,6 +978,9 @@ struct GameConfig {
     std::vector<WidescreenCullKeepSite> ws_cull_keep_sites;
     // Exact 12-bit angular half-extents used by terrain-cell frusta.
     std::vector<WidescreenAngleSite> ws_cull_angle_sites;
+    std::vector<WidescreenSxyXLowerSite> ws_cull_sxy_x_lower_sites;
+    std::vector<WidescreenSxyCullSite> ws_cull_sxy_sites;
+
     // Full-word-guarded model-participation cosine compares widened only in
     // the camera-horizontal plane. Empty/default is completely inert.
     WidescreenAspectConeConfig ws_aspect_cone;

@@ -212,6 +212,26 @@ int psx_ws_cull_vxrange(uint32_t x, uint32_t imm) {
     return (((x + (uint32_t)margin) & 0xFFFFu) <
             (bound + 2u * (uint32_t)margin)) ? 1 : 0;
 }
+#include "ws_sxy_cull.h"
+int psx_ws_cull_sxy_x_lower(uint32_t sx_shifted)
+{
+    return psx_ws_sxy_x_lower_impl(sx_shifted, psx_ws_x_margin());
+}
+int psx_ws_cull_sxy_tri(
+    uint32_t sxy0,
+    uint32_t sxy1,
+    uint32_t sxy2)
+{
+    return psx_ws_sxy_tri_impl(sxy0, sxy1, sxy2, psx_ws_x_margin());
+}
+int psx_ws_cull_sxy_quad(
+    uint32_t sxy0,
+    uint32_t sxy1,
+    uint32_t sxy2,
+    uint32_t sxy3)
+{
+    return psx_ws_sxy_quad_impl(sxy0, sxy1, sxy2, sxy3, psx_ws_x_margin());
+}
 void psx_ws_sprite_tag(CPUState *cpu) {
     if (g_cbs.ws_sprite_tag) g_cbs.ws_sprite_tag(cpu);
 }

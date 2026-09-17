@@ -32,6 +32,7 @@
 #include "sio.h"
 #include "ws_cull_detect.h"
 #include "ws_aspect_cone_math.h"
+#include "ws_sxy_cull.h"
 #include "ws_ui_group.h"
 #include "ws_prepass_guard.h"
 #include "ws_hud_anchor.h"
@@ -579,6 +580,80 @@ int psx_ws_is_cull_slti_lower_site(uint32_t pc) {
     return ws_explicit_site(ws_explicit_slti_lower_sites,
                             ws_explicit_slti_lower_n, pc);
 }
+#define WS_SXY_LOWER_LOOKUP_CAP 128
+typedef struct {
+    uint32_t key;
+    uint32_t pc;
+    uint32_t instr;
+    uint8_t used;
+} WsSxyLowerLookupEntry;
+static WsSxyLowerLookupEntry ws_sxy_lower_lookup[WS_SXY_LOWER_LOOKUP_CAP];
+static uint32_t ws_sxy_lower_legacy[WS_SXY_LOWER_LOOKUP_CAP];
+static uint8_t ws_sxy_lower_legacy_used[WS_SXY_LOWER_LOOKUP_CAP];
+static uint32_t ws_sxy_lower_key(uint32_t pc, uint32_t instr) {
+    const uint32_t key = pc ^ (instr * 0x9E3779B1u);
+    return key ^ (key >> 16);
+}
+void gpu_ws_set_sxy_x_lower_cull_sites(const uint32_t *addresses,
+                                       const uint32_t *expected, int nsites) {
+    if (nsites < 0) nsites = 0;
+    if (nsites > WS_EXPLICIT_CULL_SITES_MAX)
+        nsites = WS_EXPLICIT_CULL_SITES_MAX;
+    memset(ws_sxy_lower_lookup, 0, sizeof(ws_sxy_lower_lookup));
+    memset(ws_sxy_lower_legacy_used, 0, sizeof(ws_sxy_lower_legacy_used));
+    for (int i = 0; i < nsites; i++) {
+        const uint32_t address = addresses[i] & 0x1FFFFFFFu;
+        if (expected[i] == 0u) {
+            uint32_t legacy_slot = ws_sxy_lower_key(
+                address, 0u) &
+                (WS_SXY_LOWER_LOOKUP_CAP - 1u);
+            for (uint32_t n = 0; n < WS_SXY_LOWER_LOOKUP_CAP; n++) {
+                if (!ws_sxy_lower_legacy_used[legacy_slot]) {
+                    ws_sxy_lower_legacy[legacy_slot] =
+                        address;
+                    ws_sxy_lower_legacy_used[legacy_slot] = 1;
+                    break;
+                }
+                legacy_slot = (legacy_slot + 1u) &
+                    (WS_SXY_LOWER_LOOKUP_CAP - 1u);
+            }
+        }
+        uint32_t slot = ws_sxy_lower_key(address, expected[i]) &
+                        (WS_SXY_LOWER_LOOKUP_CAP - 1u);
+        for (uint32_t n = 0; n < WS_SXY_LOWER_LOOKUP_CAP; n++) {
+            if (!ws_sxy_lower_lookup[slot].used) {
+                ws_sxy_lower_lookup[slot].key =
+                    ws_sxy_lower_key(address, expected[i]);
+                ws_sxy_lower_lookup[slot].pc = address;
+                ws_sxy_lower_lookup[slot].instr = expected[i];
+                ws_sxy_lower_lookup[slot].used = 1;
+                break;
+            }
+            slot = (slot + 1u) & (WS_SXY_LOWER_LOOKUP_CAP - 1u);
+        }
+    }
+}
+int psx_ws_is_sxy_x_lower_site(uint32_t pc, uint32_t instr) {
+    const uint32_t p = pc & 0x1FFFFFFFu;
+    uint32_t legacy_slot = ws_sxy_lower_key(p, 0u) &
+                           (WS_SXY_LOWER_LOOKUP_CAP - 1u);
+    for (uint32_t n = 0; n < WS_SXY_LOWER_LOOKUP_CAP; n++) {
+        if (!ws_sxy_lower_legacy_used[legacy_slot]) break;
+        if (ws_sxy_lower_legacy[legacy_slot] == p)
+            return (instr >> 26) == 0x0Au && (instr & 0xFFFFu) == 0u;
+        legacy_slot = (legacy_slot + 1u) & (WS_SXY_LOWER_LOOKUP_CAP - 1u);
+    }
+    const uint32_t key = ws_sxy_lower_key(p, instr);
+    uint32_t slot = key & (WS_SXY_LOWER_LOOKUP_CAP - 1u);
+    for (uint32_t n = 0; n < WS_SXY_LOWER_LOOKUP_CAP; n++) {
+        if (!ws_sxy_lower_lookup[slot].used) return 0;
+        if (ws_sxy_lower_lookup[slot].key == key &&
+            ws_sxy_lower_lookup[slot].pc == (pc & 0x1FFFFFFFu) &&
+            ws_sxy_lower_lookup[slot].instr == instr) return 1;
+        slot = (slot + 1u) & (WS_SXY_LOWER_LOOKUP_CAP - 1u);
+    }
+    return 0;
+}
 static uint32_t ws_explicit_negsub_sites[WS_EXPLICIT_CULL_SITES_MAX];
 static int ws_explicit_negsub_n = 0;
 void gpu_ws_set_negsub_cull_sites(const uint32_t *sites, int nsites) {
@@ -708,6 +783,113 @@ int psx_ws_cull_keep_site(uint32_t pc, uint32_t instr, uint32_t vanilla,
         return 1;
     }
     return 0;
+}
+
+typedef struct {
+    uint32_t address;
+    uint32_t expected;
+    uint8_t kind;
+    uint8_t result_reg;
+    uint8_t vertex_regs[4];
+    uint8_t fold_n;
+    uint32_t fold_addresses[4];
+    uint32_t fold_expected[4];
+} WsSxyCullSite;
+static WsSxyCullSite ws_sxy_cull_sites[WS_EXPLICIT_CULL_SITES_MAX];
+int g_psx_ws_sxy_cull_count = 0;
+#define WS_SXY_LOOKUP_CAP 512
+typedef struct {
+    uint32_t pc;
+    uint32_t instr;
+    int16_t site;
+    uint8_t match;
+    uint8_t used;
+} WsSxyLookupEntry;
+static WsSxyLookupEntry ws_sxy_lookup[WS_SXY_LOOKUP_CAP];
+static uint32_t ws_sxy_pc_hash(uint32_t pc) {
+    return (pc * 0x9E3779B1u) & (WS_SXY_LOOKUP_CAP - 1u);
+}
+static void ws_sxy_lookup_insert(uint32_t pc, uint32_t instr, int site,
+                                 uint8_t match) {
+    uint32_t slot = ws_sxy_pc_hash(pc);
+    for (uint32_t n = 0; n < WS_SXY_LOOKUP_CAP; n++) {
+        WsSxyLookupEntry *entry = &ws_sxy_lookup[slot];
+        if (!entry->used) {
+            entry->pc = pc;
+            entry->instr = instr;
+            entry->site = (int16_t)site;
+            entry->match = match;
+            entry->used = 1;
+            return;
+        }
+        slot = (slot + 1u) & (WS_SXY_LOOKUP_CAP - 1u);
+    }
+}
+static const WsSxyLookupEntry *ws_sxy_lookup_find(uint32_t pc) {
+    uint32_t slot = ws_sxy_pc_hash(pc);
+    for (uint32_t n = 0; n < WS_SXY_LOOKUP_CAP; n++) {
+        const WsSxyLookupEntry *entry = &ws_sxy_lookup[slot];
+        if (!entry->used) return NULL;
+        if (entry->pc == pc) return entry;
+        slot = (slot + 1u) & (WS_SXY_LOOKUP_CAP - 1u);
+    }
+    return NULL;
+}
+void gpu_ws_set_sxy_cull_sites(const uint32_t *addresses,
+                               const uint32_t *expected,
+                               const uint32_t *kinds,
+                               const uint32_t *result_regs,
+                               const uint32_t *vertex_regs,
+                               const uint32_t *fold_addresses,
+                               const uint32_t *fold_expected,
+                               const uint32_t *fold_counts, int nsites) {
+    if (nsites < 0) nsites = 0;
+    if (nsites > WS_EXPLICIT_CULL_SITES_MAX)
+        nsites = WS_EXPLICIT_CULL_SITES_MAX;
+    g_psx_ws_sxy_cull_count = nsites;
+    memset(ws_sxy_lookup, 0, sizeof(ws_sxy_lookup));
+    for (int i = 0; i < nsites; i++) {
+        ws_sxy_cull_sites[i].address = addresses[i] & 0x1FFFFFFFu;
+        ws_sxy_cull_sites[i].expected = expected[i];
+        ws_sxy_cull_sites[i].kind = (uint8_t)kinds[i];
+        ws_sxy_cull_sites[i].result_reg = (uint8_t)(result_regs
+            ? result_regs[i] & 31u : 1u);
+        for (int j = 0; j < 4; j++)
+            ws_sxy_cull_sites[i].vertex_regs[j] = (uint8_t)(vertex_regs
+                ? vertex_regs[i * 4 + j] & 31u : 0u);
+        const uint32_t fold_n = fold_counts ? fold_counts[i] : 0u;
+        ws_sxy_cull_sites[i].fold_n = (uint8_t)(fold_n > 4u ? 4u : fold_n);
+        for (uint32_t j = 0; j < (uint32_t)ws_sxy_cull_sites[i].fold_n; j++) {
+            ws_sxy_cull_sites[i].fold_addresses[j] =
+                fold_addresses[i * 4 + j] & 0x1FFFFFFFu;
+            ws_sxy_cull_sites[i].fold_expected[j] = fold_expected[i * 4 + j];
+        }
+        ws_sxy_lookup_insert(ws_sxy_cull_sites[i].address,
+                             ws_sxy_cull_sites[i].expected, i, 1u);
+        for (uint32_t j = 0; j < (uint32_t)ws_sxy_cull_sites[i].fold_n; j++)
+            ws_sxy_lookup_insert(ws_sxy_cull_sites[i].fold_addresses[j],
+                                 ws_sxy_cull_sites[i].fold_expected[j], i, 2u);
+    }
+}
+PsxWsSxyCullMatch psx_ws_sxy_cull_lookup(uint32_t pc, uint32_t instr,
+                                        uint32_t *kind, uint32_t *result_reg,
+                                        uint32_t vertex_regs[4]) {
+    const uint32_t phys = pc & 0x1FFFFFFFu;
+    const WsSxyLookupEntry *entry = ws_sxy_lookup_find(phys);
+    if (!entry || entry->instr != instr)
+        return PSX_WS_SXY_CULL_NONE;
+    if (entry->match == 1u) {
+        const WsSxyCullSite *final = &ws_sxy_cull_sites[entry->site];
+        if (kind) *kind = final->kind;
+        if (result_reg) *result_reg = final->result_reg;
+        if (vertex_regs)
+            for (int j = 0; j < 4; j++)
+                vertex_regs[j] = final->vertex_regs[j];
+        return PSX_WS_SXY_CULL_FINAL;
+    }
+    if (entry->match == 2u)
+        return PSX_WS_SXY_CULL_FOLD;
+    return PSX_WS_SXY_CULL_NONE;
 }
 
 typedef struct {
@@ -6160,3 +6342,23 @@ int gpu_snapshot_read(const uint8_t *p, uint32_t len) {
 }
 uint16_t* gpu_get_vram_ptr(void){ return vram; }
 uint32_t  gpu_get_vram_bytes(void){ return (uint32_t)sizeof(vram); }
+
+int psx_ws_cull_sxy_x_lower(uint32_t sx_shifted)
+{
+    return psx_ws_sxy_x_lower_impl(sx_shifted, psx_ws_x_margin());
+}
+int psx_ws_cull_sxy_tri(
+    uint32_t sxy0,
+    uint32_t sxy1,
+    uint32_t sxy2)
+{
+    return psx_ws_sxy_tri_impl(sxy0, sxy1, sxy2, psx_ws_x_margin());
+}
+int psx_ws_cull_sxy_quad(
+    uint32_t sxy0,
+    uint32_t sxy1,
+    uint32_t sxy2,
+    uint32_t sxy3)
+{
+    return psx_ws_sxy_quad_impl(sxy0, sxy1, sxy2, sxy3, psx_ws_x_margin());
+}

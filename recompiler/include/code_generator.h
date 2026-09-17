@@ -166,6 +166,9 @@ struct CodeGenConfig {
     // scales tan(angle) by the current horizontal reveal factor.
     std::vector<PSXRecompV4::WidescreenAngleSite> ws_cull_angle_sites;
 
+    std::vector<PSXRecompV4::WidescreenSxyXLowerSite> ws_cull_sxy_x_lower_sites;
+    std::vector<PSXRecompV4::WidescreenSxyCullSite> ws_cull_sxy_sites;
+
     // Exact model-participation cosine compares that gain a camera-horizontal
     // aspect envelope while preserving the vanilla vertical cone.
     PSXRecompV4::WidescreenAspectConeConfig ws_aspect_cone;

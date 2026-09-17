@@ -844,6 +844,104 @@ std::string CodeGenerator::translate_instruction(uint32_t addr, uint32_t instr) 
 
     std::string code;
 
+    for (const auto& site : config_.ws_cull_sxy_x_lower_sites) {
+        if ((site.address & 0x1FFFFFFFu) != (addr & 0x1FFFFFFFu))
+            continue;
+        const bool legacy_zero_immediate = site.expected == 0;
+        const bool matches = legacy_zero_immediate
+            ? (opcode == 0x0Au && (instr & 0xFFFFu) == 0u)
+            : instr == site.expected;
+        if (!matches) {
+            if (!config_.overlay_mode) {
+                fmt::print(stderr,
+                           "ERROR: [widescreen.cull] sxy_x_lower site "
+                           "expected 0x{:08X} at 0x{:08X}, found 0x{:08X}\n",
+                           site.expected, addr, instr);
+                std::exit(1);
+            }
+            continue;
+        }
+        const std::string call = fmt::format(
+            "psx_ws_cull_sxy_x_lower({})", reg_name(get_rs(instr)));
+        if (get_rt(instr) == 0)
+            return fmt::format(
+                "(void){};  /* ws SXY shifted-X lower-edge cull */{}",
+                call, comment);
+        return fmt::format(
+            "{} = {};  /* ws SXY shifted-X lower-edge cull */{}",
+            reg_name(get_rt(instr)), call, comment);
+    }
+
+    for (const auto& site : config_.ws_cull_sxy_sites) {
+        if ((site.final_address & 0x1FFFFFFFu) ==
+            (addr & 0x1FFFFFFFu)) {
+            if (instr != site.final_expected) {
+                if (!config_.overlay_mode) {
+                    fmt::print(stderr,
+                               "ERROR: [widescreen.cull] sxy final "
+                               "expected 0x{:08X} at 0x{:08X}, found 0x{:08X}\n",
+                               site.final_expected, addr, instr);
+                    std::exit(1);
+                }
+                continue;
+            }
+
+            if (site.kind ==
+                PSXRecompV4::WidescreenSxyCullSite::Kind::Tri) {
+                const std::string call = fmt::format(
+                    "psx_ws_cull_sxy_tri({}, {}, {})",
+                    reg_name((int)site.vertex_regs[0]),
+                    reg_name((int)site.vertex_regs[1]),
+                    reg_name((int)site.vertex_regs[2]));
+                if (site.result_reg == 0)
+                    return fmt::format("(void){};  /* ws projected SXY triangle cull */{}",
+                                       call, comment);
+                return fmt::format(
+                    "{} = psx_ws_cull_sxy_tri({}, {}, {});"
+                    "  /* ws projected SXY triangle cull */{}",
+                    reg_name((int)site.result_reg),
+                    reg_name((int)site.vertex_regs[0]),
+                    reg_name((int)site.vertex_regs[1]),
+                    reg_name((int)site.vertex_regs[2]), comment);
+            }
+
+            const std::string call = fmt::format(
+                "psx_ws_cull_sxy_quad({}, {}, {}, {})",
+                reg_name((int)site.vertex_regs[0]),
+                reg_name((int)site.vertex_regs[1]),
+                reg_name((int)site.vertex_regs[2]),
+                reg_name((int)site.vertex_regs[3]));
+            if (site.result_reg == 0)
+                return fmt::format("(void){};  /* ws projected SXY quad cull */{}",
+                                   call, comment);
+            return fmt::format(
+                "{} = psx_ws_cull_sxy_quad({}, {}, {}, {});"
+                "  /* ws projected SXY quad cull */{}",
+                reg_name((int)site.result_reg),
+                reg_name((int)site.vertex_regs[0]),
+                reg_name((int)site.vertex_regs[1]),
+                reg_name((int)site.vertex_regs[2]),
+                reg_name((int)site.vertex_regs[3]), comment);
+        }
+
+        for (size_t i = 0; i < site.fold_addresses.size(); i++) {
+            if ((site.fold_addresses[i] & 0x1FFFFFFFu) !=
+                (addr & 0x1FFFFFFFu))
+                continue;
+            if (instr != site.fold_expected[i]) {
+                if (!config_.overlay_mode) {
+                    fmt::print(stderr,
+                               "ERROR: [widescreen.cull] sxy fold "
+                               "expected 0x{:08X} at 0x{:08X}, found 0x{:08X}\n",
+                               site.fold_expected[i], addr, instr);
+                    std::exit(1);
+                }
+                break;
+            }
+            return "/* ws SXY cull folded */";
+        }
+    }
+
     // Full-word-guarded terrain-frustum half-angle constants. Scaling the
     // tangent is the geometric counterpart of widening the horizontal
     // projection; adding screen pixels directly to 12-bit angle units is not.
@@ -3296,6 +3394,9 @@ void CodeGenerator::emit_runtime_externs(std::ostream& ss) const {
     ss << "extern int  psx_ws_cull_sltiu(uint32_t sx, uint32_t imm);  /* ws auto screen-x cull (gpu.c) */\n";
     ss << "extern int  psx_ws_cull_slti(uint32_t sx, uint32_t imm);   /* ws cull signed right edge (gpu.c) */\n";
     ss << "extern int  psx_ws_cull_slti_lower(uint32_t sx, uint32_t imm); /* ws cull signed lower edge (gpu.c) */\n";
+    ss << "extern int  psx_ws_cull_sxy_x_lower(uint32_t sx_shifted); /* ws shifted SXY X lower-edge cull */\n";
+    ss << "extern int  psx_ws_cull_sxy_tri(uint32_t sxy0, uint32_t sxy1, uint32_t sxy2); /* ws projected SXY triangle cull */\n";
+    ss << "extern int  psx_ws_cull_sxy_quad(uint32_t sxy0, uint32_t sxy1, uint32_t sxy2, uint32_t sxy3); /* ws projected SXY quad cull */\n";
     ss << "extern int  psx_ws_cull_bltz(uint32_t v);                  /* ws cull signed left edge (gpu.c) */\n";
     ss << "extern int  psx_ws_cull_vxrange(uint32_t x, uint32_t imm); /* ws masked-u16 X window */\n";
     ss << "extern int32_t psx_ws_depth_bound(int32_t imm);            /* ws aspect-scaled far bound */\n";

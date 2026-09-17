@@ -243,6 +243,8 @@ void gpu_ws_set_explicit_cull_sites(const uint32_t *bias, int nbias,
                                     const uint32_t *slti, int nslti,
                                     const uint32_t *range, int nrange);
 void gpu_ws_set_slti_lower_cull_sites(const uint32_t *sites, int nsites);
+void gpu_ws_set_sxy_x_lower_cull_sites(const uint32_t *addresses,
+                                       const uint32_t *expected, int nsites);
 void gpu_ws_set_negsub_cull_sites(const uint32_t *sites, int nsites);
 void gpu_ws_set_vxrange_cull_sites(const uint32_t *sites, int nsites);
 void gpu_ws_set_depth_cull_sites(const uint32_t *sites, int nsites);
@@ -251,6 +253,14 @@ void gpu_ws_set_xclip_load_sites(const uint32_t *sites, int nsites);
 void gpu_ws_set_cull_keep_sites(const uint32_t *addresses,
                                 const uint32_t *expected,
                                 const uint32_t *results, int nsites);
+void gpu_ws_set_sxy_cull_sites(const uint32_t *addresses,
+                               const uint32_t *expected,
+                               const uint32_t *kinds,
+                               const uint32_t *result_regs,
+                               const uint32_t *vertex_regs,
+                               const uint32_t *fold_addresses,
+                               const uint32_t *fold_expected,
+                               const uint32_t *fold_counts, int nsites);
 void gpu_ws_set_angle_sites(const uint32_t *addresses,
                             const uint32_t *expected, int nsites);
 void gpu_ws_set_aspect_cone(const uint32_t *addresses,
@@ -272,6 +282,7 @@ void gpu_ws_set_aspect_cone(const uint32_t *addresses,
 int  psx_ws_is_cull_bias_site(uint32_t pc);
 int  psx_ws_is_cull_slti_site(uint32_t pc);
 int  psx_ws_is_cull_slti_lower_site(uint32_t pc);
+int  psx_ws_is_sxy_x_lower_site(uint32_t pc, uint32_t instr);
 int  psx_ws_is_cull_negsub_site(uint32_t pc);
 int  psx_ws_is_cull_vxrange_site(uint32_t pc);
 int  psx_ws_is_cull_depth_site(uint32_t pc);
@@ -284,6 +295,18 @@ uint32_t psx_ws_xclip_bound(uint32_t vanilla);
 uint32_t psx_ws_cull_keep_result(uint32_t vanilla, uint32_t forced);
 int psx_ws_cull_keep_site(uint32_t pc, uint32_t instr, uint32_t vanilla,
                           uint32_t *out);
+typedef enum {
+    PSX_WS_SXY_CULL_NONE,
+    PSX_WS_SXY_CULL_FOLD,
+    PSX_WS_SXY_CULL_FINAL
+} PsxWsSxyCullMatch;
+extern int g_psx_ws_sxy_cull_count;
+static inline int psx_ws_has_sxy_cull_sites(void) {
+    return g_psx_ws_sxy_cull_count > 0;
+}
+PsxWsSxyCullMatch psx_ws_sxy_cull_lookup(uint32_t pc, uint32_t instr,
+                                        uint32_t *kind, uint32_t *result_reg,
+                                        uint32_t vertex_regs[4]);
 uint32_t psx_ws_angle_widen(uint32_t vanilla);
 int psx_ws_angle_site(uint32_t pc, uint32_t instr, uint32_t *out);
 uint32_t psx_ws_aspect_cone_result(uint32_t site, uint32_t vanilla,
@@ -312,6 +335,19 @@ int  psx_ws_cull_slti(uint32_t sx, uint32_t imm);
 int  psx_ws_cull_slti_lower(uint32_t sx, uint32_t imm);
 int  psx_ws_cull_bltz(uint32_t v);
 int  psx_ws_cull_vxrange(uint32_t x, uint32_t imm);
+
+int psx_ws_cull_sxy_x_lower(uint32_t sx_shifted);
+
+int psx_ws_cull_sxy_tri(
+    uint32_t sxy0,
+    uint32_t sxy1,
+    uint32_t sxy2);
+
+int psx_ws_cull_sxy_quad(
+    uint32_t sxy0,
+    uint32_t sxy1,
+    uint32_t sxy2,
+    uint32_t sxy3);
 /* True if a run of instruction words carries the screen-extent reject signature
  * (a width compare AND a height compare from the configured immediate sets).
  * Used by the interp to gate the widening to real render funnels. */

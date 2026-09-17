@@ -68,6 +68,19 @@ uint32_t overlay_codegen_config_hash(const GameConfig& c) {
     h.words("cull_screen_x", c.ws_cull_screen_x_sites);
     h.words("cull_slti", c.ws_cull_slti_sites);
     h.words("cull_slti_lower", c.ws_cull_slti_lower_sites);
+    h.tag("cull_sxy_x_lower");
+    std::vector<WidescreenSxyXLowerSite> sxy_lower_sites =
+        c.ws_cull_sxy_x_lower_sites;
+    std::sort(sxy_lower_sites.begin(), sxy_lower_sites.end(),
+              [](const auto& a, const auto& b) {
+                  if (a.address != b.address) return a.address < b.address;
+                  return a.expected < b.expected;
+              });
+    h.u32((uint32_t)sxy_lower_sites.size());
+    for (const auto& site : sxy_lower_sites) {
+        h.u32(site.address);
+        h.u32(site.expected);
+    }
     h.words("cull_bltz", c.ws_cull_bltz_sites);
     h.words("cull_negsub", c.ws_cull_negsub_sites);
     h.words("cull_vxrange", c.ws_cull_vxrange_sites);
@@ -116,6 +129,30 @@ uint32_t overlay_codegen_config_hash(const GameConfig& c) {
         h.u32(site.address);
         h.u32(site.expected);
         h.u32(site.result);
+    }
+
+    std::vector<WidescreenSxyCullSite> sxy_sites = c.ws_cull_sxy_sites;
+    std::sort(sxy_sites.begin(), sxy_sites.end(),
+              [](const auto& a, const auto& b) {
+                  if (a.final_address != b.final_address)
+                      return a.final_address < b.final_address;
+                  return a.final_expected < b.final_expected;
+              });
+    h.tag("cull_sxy");
+    h.u32((uint32_t)sxy_sites.size());
+    for (const auto& site : sxy_sites) {
+        h.u32(site.final_address);
+        h.u32(site.final_expected);
+        h.u32(site.result_reg);
+        h.u32(site.kind == WidescreenSxyCullSite::Kind::Tri ? 3u : 4u);
+        h.u32((uint32_t)site.vertex_regs.size());
+        for (uint32_t reg : site.vertex_regs)
+            h.u32(reg);
+        h.u32((uint32_t)site.fold_addresses.size());
+        for (size_t i = 0; i < site.fold_addresses.size(); i++) {
+            h.u32(site.fold_addresses[i]);
+            h.u32(site.fold_expected[i]);
+        }
     }
 
     std::vector<WidescreenAngleSite> angle_sites = c.ws_cull_angle_sites;
@@ -1719,6 +1756,8 @@ GameConfig load_game_config(const fs::path& config_path_in) {
     std::vector<uint32_t> ws_cull_branch_keep_sites;
     std::vector<WidescreenCullKeepSite> ws_cull_keep_sites;
     std::vector<WidescreenAngleSite> ws_cull_angle_sites;
+    std::vector<WidescreenSxyXLowerSite> ws_cull_sxy_x_lower_sites;
+    std::vector<WidescreenSxyCullSite> ws_cull_sxy_sites;
     WidescreenAspectConeConfig ws_aspect_cone;
     int ws_cull_guard_pixels = 0;
     int ws_cull_activation_guard_pixels = 0;
@@ -1744,6 +1783,50 @@ GameConfig load_game_config(const fs::path& config_path_in) {
             load_sites("screen_x_sites", ws_cull_screen_x_sites);
             load_sites("slti_sites",  ws_cull_slti_sites);
             load_sites("slti_lower_sites", ws_cull_slti_lower_sites);
+            if (cull.contains("sxy_x_lower_sites")) {
+                std::set<uint32_t> seen;
+                for (const auto& item : toml::find<toml::array>(cull, "sxy_x_lower_sites")) {
+                    WidescreenSxyXLowerSite site;
+                    if (item.is_table()) {
+                        site.address = parse_hex(
+                            toml::find<std::string>(item, "address"),
+                            "widescreen.cull.sxy_x_lower_sites.address");
+                        site.expected = parse_hex(
+                            toml::find<std::string>(item, "expected"),
+                            "widescreen.cull.sxy_x_lower_sites.expected");
+                    } else {
+                        site.address = parse_hex(
+                            toml::get<std::string>(item),
+                            "widescreen.cull.sxy_x_lower_sites.address");
+                        // Address-only entries remain supported for the original
+                        // schema; their safe subset is SLTI with immediate zero.
+                        site.expected = 0;
+                    }
+                    if (site.expected != 0 &&
+                        ((site.expected >> 26) != 0x0Au ||
+                         (site.expected & 0xFFFFu) != 0u)) {
+                        throw std::runtime_error(fmt::format(
+                            "{}: [widescreen.cull] sxy_x_lower_sites expected must be SLTI rt,rs,0",
+                            config_path.string()));
+                    }
+                    if (site.expected != 0 &&
+                        ((site.expected >> 16) & 31u) == 0u) {
+                        throw std::runtime_error(fmt::format(
+                            "{}: [widescreen.cull] sxy_x_lower_sites must not write $zero",
+                            config_path.string()));
+                    }
+                    if (!seen.insert(site.address & 0x1FFFFFFFu).second)
+                        throw std::runtime_error(fmt::format(
+                            "{}: duplicate [widescreen.cull] sxy_x_lower_sites address 0x{:08X}",
+                            config_path.string(), site.address));
+                    ws_cull_sxy_x_lower_sites.push_back(site);
+                }
+            }
+            if (ws_cull_sxy_x_lower_sites.size() > 64) {
+                throw std::runtime_error(fmt::format(
+                    "{}: [widescreen.cull] sxy_x_lower_sites supports at most 64 sites",
+                    config_path.string()));
+            }
             load_sites("bltz_sites",  ws_cull_bltz_sites);
             load_sites("negsub_sites", ws_cull_negsub_sites);
             load_sites("vxrange_sites", ws_cull_vxrange_sites);
@@ -1815,6 +1898,178 @@ GameConfig load_game_config(const fs::path& config_path_in) {
                             "{}: duplicate cull-angle address 0x{:08X}",
                             config_path.string(), site.address));
                     ws_cull_angle_sites.push_back(site);
+                }
+            }
+            if (cull.contains("sxy")) {
+                const auto& sites = toml::find<toml::array>(cull, "sxy");
+                if (sites.size() > 64) {
+                    throw std::runtime_error(fmt::format(
+                        "{}: [widescreen.cull] sxy supports at most 64 sites",
+                        config_path.string()));
+                }
+                std::set<uint32_t> seen_final;
+                std::set<uint32_t> seen_fold;
+
+                for (const auto& item : sites) {
+
+                    WidescreenSxyCullSite site;
+
+                    const std::string kind =
+                        toml::find<std::string>(item, "kind");
+
+                    if (kind == "tri") {
+                        site.kind = WidescreenSxyCullSite::Kind::Tri;
+                    } else if (kind == "quad") {
+                        site.kind = WidescreenSxyCullSite::Kind::Quad;
+                    } else {
+                        throw std::runtime_error(fmt::format(
+                            "{}: [widescreen.cull] sxy.kind must be \"tri\" or \"quad\"",
+                            config_path.string()));
+                    }
+
+                    site.final_address =
+                        parse_hex(
+                            toml::find<std::string>(item, "final_address"),
+                            "widescreen.cull.sxy.final_address");
+
+                    site.final_expected =
+                        parse_hex(
+                            toml::find<std::string>(item, "final_expected"),
+                            "widescreen.cull.sxy.final_expected");
+
+                    if (item.contains("result_reg")) {
+                        const int result_reg =
+                            toml::find<int>(item, "result_reg");
+                        if (result_reg < 0 || result_reg > 31) {
+                            throw std::runtime_error(fmt::format(
+                                "{}: [widescreen.cull] sxy.result_reg "
+                                "must be in [0, 31]",
+                                config_path.string()));
+                        }
+                        site.result_reg = (uint32_t)result_reg;
+                    } else {
+                        site.result_reg = (site.final_expected >> 11) & 31u;
+                    }
+
+                    for (const auto& reg :
+                         toml::find<std::vector<int>>(item, "vertex_regs")) {
+
+                        if (reg < 0 || reg > 31) {
+                            throw std::runtime_error(fmt::format(
+                                "{}: [widescreen.cull] sxy.vertex_regs contains "
+                                "an invalid GPR {}",
+                                config_path.string(), reg));
+                        }
+
+                        site.vertex_regs.push_back((uint32_t)reg);
+                    }
+
+                    const size_t expected_vertices =
+                        site.kind == WidescreenSxyCullSite::Kind::Tri ? 3 : 4;
+
+                    if (site.vertex_regs.size() != expected_vertices) {
+                        throw std::runtime_error(fmt::format(
+                            "{}: [widescreen.cull] sxy {} requires {} vertex_regs",
+                            config_path.string(),
+                            kind,
+                            expected_vertices));
+                    }
+
+                    if (item.contains("fold_addresses")) {
+                        for (const auto& a :
+                             toml::find<std::vector<std::string>>(
+                                 item, "fold_addresses")) {
+
+                            site.fold_addresses.push_back(
+                                parse_hex(
+                                    a,
+                                    "widescreen.cull.sxy.fold_addresses"));
+                        }
+                    }
+
+                    if (item.contains("fold_expected")) {
+                        for (const auto& e :
+                             toml::find<std::vector<std::string>>(
+                                 item, "fold_expected")) {
+
+                            site.fold_expected.push_back(
+                                parse_hex(
+                                    e,
+                                    "widescreen.cull.sxy.fold_expected"));
+                        }
+                    }
+
+                    if (site.fold_addresses.size() !=
+                        site.fold_expected.size()) {
+                        throw std::runtime_error(fmt::format(
+                            "{}: [widescreen.cull] sxy fold_addresses/fold_expected "
+                            "must have the same size",
+                            config_path.string()));
+                    }
+
+                    if (site.fold_addresses.size() > 4) {
+                        throw std::runtime_error(fmt::format(
+                            "{}: [widescreen.cull] sxy supports at most 4 folds",
+                            config_path.string()));
+                    }
+
+                    if (!seen_final.insert(
+                            site.final_address & 0x1FFFFFFFu).second) {
+                        throw std::runtime_error(fmt::format(
+                            "{}: duplicate [widescreen.cull] sxy final_address "
+                            "0x{:08X}",
+                            config_path.string(),
+                            site.final_address));
+                    }
+                    if (seen_fold.count(site.final_address & 0x1FFFFFFFu)) {
+                        throw std::runtime_error(fmt::format(
+                            "{}: [widescreen.cull] sxy final address overlaps a fold address 0x{:08X}",
+                            config_path.string(), site.final_address));
+                    }
+                    const uint32_t final_funct =
+                        site.final_expected & 0x3Fu;
+
+                    const uint32_t final_opcode =
+                        site.final_expected >> 26;
+
+                    if (final_opcode != 0x00u || final_funct != 0x24u) {
+                        throw std::runtime_error(fmt::format(
+                            "{}: [widescreen.cull] sxy.final_expected must be AND",
+                            config_path.string()));
+                    }
+
+                    const uint32_t final_result_reg =
+                        (site.final_expected >> 11) & 31u;
+                    if (site.result_reg != final_result_reg) {
+                        throw std::runtime_error(fmt::format(
+                            "{}: [widescreen.cull] sxy.result_reg {} "
+                            "does not match final_expected destination {}",
+                            config_path.string(), site.result_reg,
+                            final_result_reg));
+                    }
+
+                    for (uint32_t fold : site.fold_expected) {
+                        if ((fold >> 26) != 0x00u ||
+                            (fold & 0x3Fu) != 0x24u) {
+                            throw std::runtime_error(fmt::format(
+                                "{}: [widescreen.cull] "
+                                "sxy.fold_expected must be AND",
+                                config_path.string()));
+                        }
+                    }
+
+                    for (uint32_t fold_address : site.fold_addresses) {
+                        const uint32_t fold_phys = fold_address & 0x1FFFFFFFu;
+                        if (fold_phys == (site.final_address & 0x1FFFFFFFu) ||
+                            seen_final.count(fold_phys) ||
+                            !seen_fold.insert(fold_phys).second) {
+                            throw std::runtime_error(fmt::format(
+                                "{}: [widescreen.cull] sxy fold address overlaps another SXY site 0x{:08X}",
+                                config_path.string(), fold_address));
+                        }
+                    }
+
+                    ws_cull_sxy_sites.push_back(std::move(site));
                 }
             }
             if (cull.contains("aspect_cone")) {
@@ -2186,6 +2441,8 @@ GameConfig load_game_config(const fs::path& config_path_in) {
         /*ws_cull_branch_keep_sites*/ ws_cull_branch_keep_sites,
         /*ws_cull_keep_sites*/    ws_cull_keep_sites,
         /*ws_cull_angle_sites*/   ws_cull_angle_sites,
+        /*ws_cull_sxy_x_lower_sites*/ ws_cull_sxy_x_lower_sites,
+        /*ws_cull_sxy_sites*/     ws_cull_sxy_sites,
         /*ws_aspect_cone*/         ws_aspect_cone,
         /*ws_cull_guard_pixels*/  ws_cull_guard_pixels,
         /*ws_cull_activation_guard_pixels*/ ws_cull_activation_guard_pixels,

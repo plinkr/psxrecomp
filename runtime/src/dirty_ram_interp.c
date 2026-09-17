@@ -1819,9 +1819,33 @@ static int exec_one_fetched_inner(CPUState *cpu, uint32_t pc, uint32_t insn,
             return 0;
         }
         case 0x24: /* AND */
+        {
+            if (psx_ws_has_sxy_cull_sites()) {
+                uint32_t kind, result_reg, vertex_regs[4];
+                const PsxWsSxyCullMatch match = psx_ws_sxy_cull_lookup(
+                    pc, insn, &kind, &result_reg, vertex_regs);
+                if (match == PSX_WS_SXY_CULL_FOLD) {
+                    cpu->gpr[0] = 0;
+                    return 0;
+                }
+                if (match == PSX_WS_SXY_CULL_FINAL) {
+                    if (kind == 3u) {
+                        if (result_reg != 0) cpu->gpr[result_reg] = (uint32_t)psx_ws_cull_sxy_tri(
+                            cpu->gpr[vertex_regs[0]], cpu->gpr[vertex_regs[1]],
+                            cpu->gpr[vertex_regs[2]]);
+                    } else {
+                        if (result_reg != 0) cpu->gpr[result_reg] = (uint32_t)psx_ws_cull_sxy_quad(
+                            cpu->gpr[vertex_regs[0]], cpu->gpr[vertex_regs[1]],
+                            cpu->gpr[vertex_regs[2]], cpu->gpr[vertex_regs[3]]);
+                    }
+                    cpu->gpr[0] = 0;
+                    return 0;
+                }
+            }
             cpu->gpr[rd] = cpu->gpr[rs] & cpu->gpr[rt];
             cpu->gpr[0] = 0;
             return 0;
+        }
         case 0x25: { /* OR */
             uint32_t a = cpu->gpr[rs], b = cpu->gpr[rt];
             cpu->gpr[rd] = a | b;
@@ -2022,6 +2046,9 @@ static int exec_one_fetched_inner(CPUState *cpu, uint32_t pc, uint32_t insn,
         /* Widescreen render-funnel RIGHT-edge widen (auto_screen_x) for the
          * signed min/max funnel idiom (`slti v, minSX, W`) — the paired left
          * edge is the bltz above. Identity at 4:3 (margin 0). */
+        else if (psx_ws_is_sxy_x_lower_site(pc, insn))
+            cpu->gpr[rt] = (uint32_t)psx_ws_cull_sxy_x_lower(
+                cpu->gpr[rs]);
         else if (psx_ws_is_cull_slti_lower_site(pc))
             cpu->gpr[rt] = (uint32_t)psx_ws_cull_slti_lower(
                 cpu->gpr[rs], imm);

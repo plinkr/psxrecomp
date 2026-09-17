@@ -12837,6 +12837,16 @@ int main(int argc, char** argv) {
             gpu_ws_set_slti_lower_cull_sites(
                 gc.ws_cull_slti_lower_sites.data(),
                 (int)gc.ws_cull_slti_lower_sites.size());
+            std::vector<uint32_t> sxy_lower_addresses, sxy_lower_expected;
+            sxy_lower_addresses.reserve(gc.ws_cull_sxy_x_lower_sites.size());
+            sxy_lower_expected.reserve(gc.ws_cull_sxy_x_lower_sites.size());
+            for (const auto& site : gc.ws_cull_sxy_x_lower_sites) {
+                sxy_lower_addresses.push_back(site.address);
+                sxy_lower_expected.push_back(site.expected);
+            }
+            gpu_ws_set_sxy_x_lower_cull_sites(
+                sxy_lower_addresses.data(), sxy_lower_expected.data(),
+                (int)gc.ws_cull_sxy_x_lower_sites.size());
             gpu_ws_set_negsub_cull_sites(
                 gc.ws_cull_negsub_sites.data(), (int)gc.ws_cull_negsub_sites.size());
             gpu_ws_set_vxrange_cull_sites(
@@ -12847,6 +12857,39 @@ int main(int argc, char** argv) {
                 gc.ws_cull_plane_nx_sites.data(), (int)gc.ws_cull_plane_nx_sites.size());
             gpu_ws_set_xclip_load_sites(
                 gc.ws_cull_xclip_load_sites.data(), (int)gc.ws_cull_xclip_load_sites.size());
+            {
+                std::vector<uint32_t> addresses, expected, kinds, result_regs;
+                std::vector<uint32_t> vertex_regs, fold_addresses,
+                    fold_expected, fold_counts;
+                addresses.reserve(gc.ws_cull_sxy_sites.size());
+                expected.reserve(gc.ws_cull_sxy_sites.size());
+                kinds.reserve(gc.ws_cull_sxy_sites.size());
+                result_regs.reserve(gc.ws_cull_sxy_sites.size());
+                vertex_regs.reserve(gc.ws_cull_sxy_sites.size() * 4);
+                fold_counts.reserve(gc.ws_cull_sxy_sites.size());
+                for (const auto& site : gc.ws_cull_sxy_sites) {
+                    addresses.push_back(site.final_address);
+                    expected.push_back(site.final_expected);
+                    kinds.push_back(site.kind ==
+                        PSXRecompV4::WidescreenSxyCullSite::Kind::Tri ? 3u : 4u);
+                    result_regs.push_back(site.result_reg);
+                    for (int i = 0; i < 4; i++)
+                        vertex_regs.push_back(i < (int)site.vertex_regs.size()
+                            ? site.vertex_regs[i] : 0u);
+                    fold_counts.push_back((uint32_t)site.fold_addresses.size());
+                    for (int i = 0; i < 4; i++) {
+                        fold_addresses.push_back(i < (int)site.fold_addresses.size()
+                            ? site.fold_addresses[i] : 0u);
+                        fold_expected.push_back(i < (int)site.fold_expected.size()
+                            ? site.fold_expected[i] : 0u);
+                    }
+                }
+                gpu_ws_set_sxy_cull_sites(
+                    addresses.data(), expected.data(), kinds.data(),
+                    result_regs.data(), vertex_regs.data(),
+                    fold_addresses.data(), fold_expected.data(),
+                    fold_counts.data(), (int)addresses.size());
+            }
             {
                 std::vector<uint32_t> addresses, expected, results;
                 addresses.reserve(gc.ws_cull_keep_sites.size());
